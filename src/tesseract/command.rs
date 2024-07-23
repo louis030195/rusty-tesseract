@@ -4,18 +4,108 @@ use std::string::ToString;
 
 use crate::error::{TessError, TessResult};
 
+use log::{debug, error};
+use std::path::PathBuf;
+use which::which;
+
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+#[cfg(not(windows))]
+const EXECUTABLE_NAME: &str = "tesseract";
+
+#[cfg(windows)]
+const EXECUTABLE_NAME: &str = "tesseract.exe";
+
+pub fn find_tesseract_path() -> Option<PathBuf> {
+    debug!("Starting search for tesseract executable");
+
+    // Check if `tesseract` is in the PATH environment variable
+    if let Ok(path) = which(EXECUTABLE_NAME) {
+        debug!("Found tesseract in PATH: {:?}", path);
+        return Some(path);
+    }
+    debug!("tesseract not found in PATH");
+
+    // Check in current working directory
+    if let Ok(cwd) = std::env::current_dir() {
+        debug!("Current working directory: {:?}", cwd);
+        let tesseract_in_cwd = cwd.join(EXECUTABLE_NAME);
+        if tesseract_in_cwd.is_file() && tesseract_in_cwd.exists() {
+            debug!(
+                "Found tesseract in current working directory: {:?}",
+                tesseract_in_cwd
+            );
+            return Some(tesseract_in_cwd);
+        }
+        debug!("tesseract not found in current working directory");
+    }
+
+    // Check in the same folder as the executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_folder) = exe_path.parent() {
+            debug!("Executable folder: {:?}", exe_folder);
+            let tesseract_in_exe_folder = exe_folder.join(EXECUTABLE_NAME);
+            if tesseract_in_exe_folder.exists() {
+                debug!(
+                    "Found tesseract in executable folder: {:?}",
+                    tesseract_in_exe_folder
+                );
+                return Some(tesseract_in_exe_folder);
+            }
+            debug!("tesseract not found in executable folder");
+
+            // Platform-specific checks
+            #[cfg(target_os = "macos")]
+            {
+                let resources_folder = exe_folder.join("../Resources");
+                debug!("Resources folder: {:?}", resources_folder);
+                let tesseract_in_resources = resources_folder.join(EXECUTABLE_NAME);
+                if tesseract_in_resources.exists() {
+                    debug!(
+                        "Found tesseract in Resources folder: {:?}",
+                        tesseract_in_resources
+                    );
+                    return Some(tesseract_in_resources);
+                }
+                debug!("tesseract not found in Resources folder");
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                let lib_folder = exe_folder.join("lib");
+                debug!("Lib folder: {:?}", lib_folder);
+                let tesseract_in_lib = lib_folder.join(EXECUTABLE_NAME);
+                if tesseract_in_lib.exists() {
+                    debug!("Found tesseract in lib folder: {:?}", tesseract_in_lib);
+                    return Some(tesseract_in_lib);
+                }
+                debug!("tesseract not found in lib folder");
+            }
+        }
+    }
+
+    // Check in $HOME/.local/bin
+    if let Some(home) = dirs::home_dir() {
+        let tesseract_in_home = PathBuf::from(home).join(".local/bin").join(EXECUTABLE_NAME);
+        if tesseract_in_home.exists() {
+            debug!(
+                "Found tesseract in $HOME/.local/bin: {:?}",
+                tesseract_in_home
+            );
+            return Some(tesseract_in_home);
+        }
+    }
+
+    error!("tesseract not found");
+    None // Return None if tesseract is not found
+}
+
 pub(crate) fn get_tesseract_command() -> Command {
-    let tesseract = if cfg!(target_os = "windows") {
-        "tesseract.exe"
-    } else {
-        "tesseract"
-    };
+    let tesseract = find_tesseract_path().unwrap();
 
     Command::new(tesseract)
 }
